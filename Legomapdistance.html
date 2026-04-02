@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LEGO Path Planner with Table</title>
+<style>
+  body { font-family: Arial; margin: 20px; display: flex; align-items: flex-start; }
+  canvas { border: 1px solid black; cursor: crosshair; flex-shrink: 0; align-self: flex-start; }
+  #controls { margin-right: 20px; width: 300px; display: flex; flex-direction: column; }
+  #degTableContainer { max-height: 400px; overflow-y: auto; border: 1px solid black; margin-top: 5px; }
+  table { border-collapse: collapse; width: 100%; }
+  table, th, td { border: 1px solid black; padding: 4px; text-align: center; }
+  th { background-color: #eee; position: sticky; top: 0; }
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <h2>LEGO Path Planner</h2>
+  Upload Map: <input type="file" id="upload"><br><br>
+
+  Map Width (mm): <input type="number" id="mapWidthMM" value="200"><br>
+  Map Height (mm): <input type="number" id="mapHeightMM" value="150"><br><br>
+
+  Wheel:
+  <select id="wheelSelect">
+    <option value="56">SPIKE (56mm)</option>
+    <option value="88">SPIKE Large (88mm)</option>
+    <option value="56">EV3 (56mm)</option>
+  </select><br><br>
+
+  Track Width (mm): <input type="number" id="trackWidth" value="120"><br><br>
+
+  <button onclick="undo()">Undo</button>
+  <button onclick="redo()">Redo</button>
+  <button onclick="clearAll()">Clear</button><br><br>
+
+  Path:
+  <select id="pathSelect" onchange="switchPath()"></select>
+  <button onclick="addPath()">+ New Path</button><br><br>
+
+  <h3>Total Motor Degrees: <span id="totalDeg">0</span></h3>
+
+  <h3>Degrees Table</h3>
+  <div id="degTableContainer">
+    <table id="degTable">
+      <thead>
+        <tr><th>#</th><th>X</th><th>Y</th><th>Pause</th><th>Motor °</th><th>Turn °</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<canvas id="canvas" width="800" height="600"></canvas>
+
+<script>
+// --- JavaScript is unchanged from previous working version ---
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+let img = new Image();
+let paths = [[]];
+let currentPath = 0;
+let history = [];
+let historyIndex = -1;
+let mousePos = null;
+
+function saveState() {
+  const snapshot = JSON.stringify({paths, currentPath});
+  history = history.slice(0, historyIndex + 1);
+  history.push(snapshot);
+  historyIndex++;
+}
+function loadState(index) {
+  const state = JSON.parse(history[index]);
+  paths = state.paths;
+  currentPath = state.currentPath;
+  updatePathUI();
+  draw();
+}
+function undo() { if(historyIndex>0){historyIndex--;loadState(historyIndex);} }
+function redo() { if(historyIndex<history.length-1){historyIndex++;loadState(historyIndex);} }
+document.addEventListener("keydown", e=>{
+  if(e.ctrlKey && e.key==="z"){ e.preventDefault(); undo(); }
+  if((e.ctrlKey && e.key==="y")||(e.ctrlKey && e.shiftKey && e.key==="Z")){ e.preventDefault(); redo(); }
+});
+
+// Load map
+document.getElementById("upload").addEventListener("change", e=>{
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    img.onload=()=>{ canvas.width=img.width; canvas.height=img.height; draw(); };
+    img.src=ev.target.result;
+  };
+  reader.readAsDataURL(e.target.files[0]);
+});
+
+// Mouse
+canvas.addEventListener("contextmenu", e=>e.preventDefault());
+canvas.addEventListener("mousemove", e=>{
+  const rect = canvas.getBoundingClientRect();
+  mousePos={x:e.clientX-rect.left, y:e.clientY-rect.top, shift:e.shiftKey};
+  draw();
+});
+canvas.addEventListener("click", e=>{
+  let {x,y}=mousePos;
+  const pts = paths[currentPath];
+  if(e.shiftKey && pts.length && !pts[pts.length-1].pause){
+    const last = pts[pts.length-1];
+    const angle=Math.atan2(y-last.y, x-last.x);
+    const snap=Math.round(angle/(Math.PI/4))*(Math.PI/4);
+    const dist=Math.hypot(x-last.x, y-last.y);
+    x = last.x + Math.cos(snap)*dist;
+    y = last.y + Math.sin(snap)*dist;
+  }
+  pts.push({x,y,pause:false});
+  saveState(); draw();
+});
+canvas.addEventListener("mousedown", e=>{
+  if(e.button===2){
+    const rect = canvas.getBoundingClientRect();
+    const x=e.clientX-rect.left;
+    const y=e.clientY-rect.top;
+    paths[currentPath].push({x,y,pause:true});
+    saveState(); draw();
+  }
+});
+
+// Draw function
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(img.src) ctx.drawImage(img,0,0);
+
+  const mapW = +document.getElementById("mapWidthMM").value;
+  const mapH = +document.getElementById("mapHeightMM").value;
+  const wheelD = +document.getElementById("wheelSelect").value;
+  const track = +document.getElementById("trackWidth").value;
+  const circ = Math.PI*wheelD;
+
+  let totalDeg=0;
+  const tbody = document.querySelector("#degTable tbody");
+  tbody.innerHTML="";
+
+  paths.forEach((pts, pIdx)=>{
+    ctx.strokeStyle=pIdx===currentPath?"blue":"gray";
+
+    for(let i=0;i<pts.length;i++){
+      const p=pts[i];
+      if(p.pause){ ctx.fillStyle="orange"; ctx.fillRect(p.x-4,p.y-4,8,8); }
+      else { ctx.fillStyle="red"; ctx.beginPath(); ctx.arc(p.x,p.y,4,0,Math.PI*2); ctx.fill(); }
+
+      if(i>0 && !p.pause && !pts[i-1].pause){
+        const prev=pts[i-1];
+        ctx.beginPath(); ctx.moveTo(prev.x,prev.y); ctx.lineTo(p.x,p.y); ctx.stroke();
+
+        const dx=(p.x-prev.x)/canvas.width*mapW;
+        const dy=(p.y-prev.y)/canvas.height*mapH;
+        const dist=Math.hypot(dx,dy);
+        const motorDeg=(dist/circ)*360;
+        if(pIdx===currentPath) totalDeg+=motorDeg;
+
+        const midX=(p.x+prev.x)/2;
+        const midY=(p.y+prev.y)/2;
+        ctx.fillStyle="white"; ctx.fillRect(midX-25,midY-10,50,14);
+        ctx.fillStyle="black"; ctx.fillText(Math.round(motorDeg)+"°",midX-20,midY);
+
+        // Turn calculation
+        let turnDeg = 0;
+        if(i>1 && !pts[i-2].pause){
+          const p0=pts[i-2];
+          const a1=Math.atan2(prev.y-p0.y, prev.x-p0.x);
+          const a2=Math.atan2(p.y-prev.y, p.x-prev.x);
+          let turn=(a2-a1)*180/Math.PI; if(turn>180) turn-=360; if(turn<-180) turn+=360;
+          const turnCirc=Math.PI*track;
+          const turnDist=Math.abs(turn)/360*turnCirc;
+          turnDeg=(turnDist/circ)*360;
+          const left=turn>0?-turnDeg:turnDeg;
+          const right=-left;
+          ctx.fillStyle="yellow"; ctx.fillRect(prev.x-40,prev.y-25,80,14);
+          ctx.fillStyle="black";
+          ctx.fillText(`T:${Math.round(turn)} L:${Math.round(left)} R:${Math.round(right)}`, prev.x-38,prev.y-15);
+        }
+
+        // Table row
+        const tr=document.createElement("tr");
+        tr.innerHTML=`<td>${i}</td><td>${Math.round(p.x)}</td><td>${Math.round(p.y)}</td><td>${p.pause?"Yes":"No"}</td><td>${Math.round(motorDeg)}</td><td>${Math.round(turnDeg)}</td>`;
+        tbody.appendChild(tr);
+      }
+    }
+  });
+  document.getElementById("totalDeg").innerText=Math.round(totalDeg);
+
+  // Preview line
+  const pts = paths[currentPath];
+  if(mousePos && pts.length && !pts[pts.length-1].pause){
+    let {x,y}=mousePos;
+    const last=pts[pts.length-1];
+    if(mousePos.shift){
+      const angle=Math.atan2(y-last.y, x-last.x);
+      const snap=Math.round(angle/(Math.PI/4))*(Math.PI/4);
+      const dist=Math.hypot(x-last.x,y-last.y);
+      x=last.x+Math.cos(snap)*dist;
+      y=last.y+Math.sin(snap)*dist;
+    }
+    ctx.setLineDash([5,5]);
+    ctx.strokeStyle="green";
+    ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(x,y); ctx.stroke();
+    ctx.setLineDash([]);
+
+    const dx=(x-last.x)/canvas.width*mapW;
+    const dy=(y-last.y)/canvas.height*mapH;
+    const dist=Math.hypot(dx,dy);
+    const motorDeg=(dist/circ)*360;
+    const midX=(x+last.x)/2;
+    const midY=(y+last.y)/2;
+    ctx.fillStyle="white"; ctx.fillRect(midX-25,midY-10,50,14);
+    ctx.fillStyle="green"; ctx.fillText(Math.round(motorDeg)+"°",midX-20,midY);
+  }
+}
+
+// Path management
+function addPath(){ paths.push([]); currentPath=paths.length-1; saveState(); updatePathUI(); draw();}
+function switchPath(){ currentPath=+pathSelect.value; saveState(); draw();}
+function updatePathUI(){ const sel=document.getElementById("pathSelect"); sel.innerHTML=""; paths.forEach((_,i)=>{const opt=document.createElement("option"); opt.value=i; opt.text="Path "+(i+1); sel.appendChild(opt);}); sel.value=currentPath;}
+function clearAll(){ paths=[[]]; currentPath=0; saveState(); updatePathUI(); draw();}
+
+// Init
+saveState(); updatePathUI(); draw();
+</script>
+
+</body>
+</html>
