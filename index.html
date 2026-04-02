@@ -228,15 +228,27 @@ function draw(){
   }
 }
 
-  document.getElementById("downloadBtn").addEventListener("click", () => {
+document.getElementById("downloadBtn").addEventListener("click", async () => {
   const url = "https://raw.githubusercontent.com/MEL-323/Legomapdistance/main/Legomapdistance.html";
 
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "lego-path-planner.html"; // forces filename
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+
+    const a = document.createElement("a");
+    const objectURL = URL.createObjectURL(blob);
+
+    a.href = objectURL;
+    a.download = "lego-path-planner.html"; // forces download
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    URL.revokeObjectURL(objectURL);
+  } catch (err) {
+    alert("Download failed. Check internet connection.");
+    console.error(err);
+  }
 });
   
 // Path management
